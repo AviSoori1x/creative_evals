@@ -2,7 +2,10 @@
 
 A three-stage pipeline for extracting and generating high-quality role-playing scenes from literary works, based on the [CharacterBox paper](https://arxiv.org/abs/2412.05631) (NAACL 2025).
 
-**Now with intelligent format detection for plays vs. novels!**
+**Features:**
+- Intelligent format detection for plays vs. novels
+- 16 thematic styles (cyberpunk, steampunk, noir, etc.) for scene variation
+- Three-stage quality pipeline: Screenwriter → Director → Evaluator
 
 ## Table of Contents
 
@@ -10,6 +13,7 @@ A three-stage pipeline for extracting and generating high-quality role-playing s
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [The Three-Stage Pipeline](#the-three-stage-pipeline)
+- [Thematic Styles](#thematic-styles)
 - [Format Detection & Segmentation](#format-detection--segmentation)
 - [Input/Output Formats](#inputoutput-formats)
 - [Configuration](#configuration)
@@ -32,6 +36,11 @@ This pipeline transforms raw literary texts into structured scenes suitable for 
 │   Text          │  ──► │  Pipeline       │  ──► │   Scenes        │
 │   (Gutenberg)   │      │  (LLM-powered)  │      │   (JSON)        │
 └─────────────────┘      └─────────────────┘      └─────────────────┘
+                                │
+                    ┌───────────┴───────────┐
+                    ▼                       ▼
+              Original Style         Thematic Variations
+              (faithful)             (cyberpunk, noir, etc.)
 ```
 
 ### Key Features
@@ -39,16 +48,17 @@ This pipeline transforms raw literary texts into structured scenes suitable for 
 | Feature | Description |
 |---------|-------------|
 | **Format Detection** | Automatically identifies plays vs. novels and applies appropriate segmentation |
+| **Thematic Styles** | 16 literary styles for scene variation (cyberpunk, steampunk, noir, wuxia, etc.) |
 | **Extraction** | Pulls scenes from existing passages in books |
 | **Generation** | Creates original scenes set in the book's world |
 | **Quality Control** | Three-stage refinement with scoring and rejection |
 | **Incremental Saves** | Progress saved after each book (crash-safe) |
-| **Configurable** | Adjust scenes per book, model, verbosity |
+| **Configurable** | Adjust scenes per book, model, verbosity, theming |
 
 ### File Structure
 
 ```
-├── scene_crafter.py     # Main pipeline script
+├── scene_crafter.py        # Main pipeline script (with thematic variations)
 ├── passage_segmenter.py    # Format detection + intelligent segmentation
 ├── README.md               # This file
 └── books.json              # Your input (book texts)
@@ -76,7 +86,6 @@ found = {
     1342: "The Project Gutenberg eBook of Pride and Prejudice...",
     1661: "The Project Gutenberg eBook of Sherlock Holmes...",
     844: "The Project Gutenberg eBook of The Importance of Being Earnest...",
-    # ...
 }
 
 with open('books.json', 'w', encoding='utf-8') as f:
@@ -86,22 +95,31 @@ with open('books.json', 'w', encoding='utf-8') as f:
 ### 3. Run the Pipeline
 
 ```bash
-# Basic usage
+# Basic usage - generated scenes get random thematic styles
 python scene_crafter.py \
     --api-key YOUR_FIREWORKS_API_KEY \
     --input books.json \
     --output scenes.json
 
-# With options
+# Also apply themes to 50% of extracted scenes
+python scene_crafter.py \
+    --api-key $FIREWORKS_KEY \
+    --input books.json \
+    --theme-extracted
+
+# Custom settings
 python scene_crafter.py \
     --api-key $FIREWORKS_KEY \
     --input books.json \
     --output scenes.json \
-    -n 5 \        # 5 extracted scenes per book
-    -g 5 \        # 5 generated scenes per book
-    --verbose     # Detailed logging
+    -n 5 \                        # 5 extracted scenes per book
+    -g 5 \                        # 5 generated scenes per book
+    --theme-extracted \           # Theme some extracted scenes too
+    --theme-extracted-ratio 0.8 \ # 80% of extracted get themed
+    --seed 42 \                   # Reproducible style selection
+    --verbose
 
-# Background execution (keeps running after terminal closes)
+# Background execution
 nohup python scene_crafter.py \
     --api-key $FIREWORKS_KEY \
     --input books.json \
@@ -125,6 +143,9 @@ tail -f scene_crafter_*.log
 | `--n-generated` | `-g` | 5 | Generated scenes per book |
 | `--books` | | All | Specific book IDs to process |
 | `--verbose` | `-v` | Off | Debug logging |
+| `--theme-extracted` | | Off | Apply themes to extracted scenes too |
+| `--theme-extracted-ratio` | | 0.5 | Fraction of extracted scenes to theme |
+| `--seed` | | None | Random seed for reproducible style selection |
 
 ---
 
@@ -145,10 +166,11 @@ tail -f scene_crafter_*.log
 │                    │  │     craft_scenes_for_book()             │  │   │
 │                    │  │                                         │  │   │
 │                    │  │  1. Detect format (play vs novel)       │  │   │
-│                    │  │  2. Select best passages                │  │   │
-│                    │  │  3. For each passage: craft_scene()     │  │   │
-│                    │  │  4. Generate original: craft_scene()    │  │   │
-│                    │  │  5. Save progress                       │  │   │
+│                    │  │  2. Select thematic styles for scenes   │  │   │
+│                    │  │  3. Select best passages                │  │   │
+│                    │  │  4. For each passage: craft_scene()     │  │   │
+│                    │  │  5. Generate original: craft_scene()    │  │   │
+│                    │  │  6. Save progress                       │  │   │
 │                    │  └─────────────────────────────────────────┘  │   │
 │                    └───────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
@@ -159,56 +181,35 @@ tail -f scene_crafter_*.log
 ```
 scene_crafter.py
 │
+├── THEMATIC_STYLES           # 16 style definitions with prompts
+├── GENRE_STYLE_AFFINITIES    # Which styles work well with which genres
+│
 ├── Data Classes
-│   ├── Character          # Name, role, physical/psychological state, position
-│   ├── Environment        # Time, location, description
-│   └── Scene              # Full scene + scores + format metadata
+│   ├── Character             # Name, role, physical/psychological state
+│   ├── Environment           # Time, location, description
+│   └── Scene                 # Full scene + scores + style metadata
 │
-├── LLMClient              # OpenAI-compatible API wrapper
-│   ├── call()             # Raw LLM call with retries
-│   └── call_json()        # Call + JSON parsing
+├── ThematicStyleSelector     # Picks styles based on genre affinity
+│   ├── select_style()        # Pick one style (weighted by genre)
+│   ├── select_multiple_unique() # Pick N unique styles
+│   └── get_style_info()      # Get full style details
 │
-├── SceneCrafter           # Main pipeline orchestrator
-│   ├── _get_format()              # Detect play vs novel
-│   ├── _select_passages()         # Get best passages for format
-│   ├── screenwriter_extract()     # Stage 1: Extract (format-aware)
-│   ├── screenwriter_generate()    # Stage 1: Generate (format-aware)
-│   ├── director_refine()          # Stage 2: Enhance scene
-│   ├── evaluator_assess()         # Stage 3: Score and filter
-│   ├── craft_scene()              # Full 3-stage pipeline
-│   └── craft_scenes_for_book()    # Batch processing
+├── LLMClient                 # OpenAI-compatible API wrapper
+│   ├── call()                # Raw LLM call with retries
+│   └── call_json()           # Call + JSON parsing
 │
-└── Utilities
-    ├── load_input()       # Load books.json
-    └── save_output()      # Save scenes.json
-
-passage_segmenter.py
+├── SceneCrafter              # Main pipeline orchestrator
+│   ├── screenwriter_extract()    # Stage 1 (original or themed)
+│   ├── screenwriter_generate()   # Stage 1 (always themed)
+│   ├── director_refine()         # Stage 2 (style-aware)
+│   ├── evaluator_assess()        # Stage 3 (style-aware scoring)
+│   ├── craft_scene()             # Full 3-stage pipeline
+│   └── craft_scenes_for_book()   # Batch with style distribution
 │
-├── FormatDetector         # Detect if text is play, novel, or unknown
-│   ├── PLAY_PATTERNS      # Act/Scene, CHARACTER:, stage directions
-│   ├── NOVEL_PATTERNS     # Chapter, narrative prose, paragraphs
-│   └── detect()           # Returns format + confidence
-│
-├── PlaySegmenter          # Segment plays into scenes
-│   ├── _split_by_scenes()         # Split on Act/Scene markers
-│   ├── _split_by_dialogue_blocks()# Split by character speeches
-│   └── _score_passage()           # Score for dramatic potential
-│
-├── NovelSegmenter         # Segment novels into passages
-│   ├── _split_by_chapters()       # Split on Chapter markers
-│   ├── _split_long_chapter()      # Handle oversized chapters
-│   ├── _split_by_paragraphs()     # Fallback splitting
-│   └── _score_passage()           # Score for scene potential
-│
-├── PassageSegmenter       # Unified interface
-│   ├── segment()          # Auto-detect and segment
-│   ├── select_best()      # Get top N passages
-│   └── analyze()          # Return stats and diagnostics
-│
-└── Convenience Functions  # Drop-in replacements
-    ├── segment_into_passages()
-    ├── select_best_passages()
-    └── score_passage()
+└── passage_segmenter.py (imported)
+    ├── FormatDetector        # Detect play vs novel
+    ├── PlaySegmenter         # Act/Scene splitting
+    └── NovelSegmenter        # Chapter/paragraph splitting
 ```
 
 ---
@@ -222,32 +223,29 @@ Based on Section 3.1 of the CharacterBox paper, scenes go through three refineme
 **Role**: Extract or generate a raw scene structure.
 
 ```
-Input:  Raw passage from book (or nothing for generation)
-Output: Basic scene JSON with environment + characters
+Input:  Raw passage + optional thematic style
+Output: Basic scene JSON with environment + characters (styled if specified)
 ```
 
 **What it does**:
 - Identifies 2-4 characters in the passage
 - Extracts time and location
-- Captures basic character states and relationships
-
-**Format-Aware Prompts**:
-- **Novels**: Looks for quoted dialogue, narrative descriptions
-- **Plays**: Understands `CHARACTER.` dialogue format, stage directions in `[brackets]`
+- Captures character states and relationships
+- If themed: Transforms setting/aesthetics to match style
 
 ### Stage 2: Director
 
 **Role**: Refine and enhance the raw scene.
 
 ```
-Input:  Raw scene from Stage 1
+Input:  Raw scene from Stage 1 + style info
 Output: Enhanced scene with conflict, hooks, richer details
 ```
 
 **What it does**:
-- Adds central conflict/tension
+- Adds central conflict/tension (fitting the thematic style)
 - Enriches character motivations
-- Improves spatial positioning
+- Improves spatial positioning with style-appropriate details
 - Adds narrative hooks for role-play
 
 ### Stage 3: Evaluator
@@ -259,46 +257,118 @@ Input:  Refined scene from Stage 2
 Output: Scores (1-5) + ACCEPT/REJECT decision
 ```
 
-**Scoring Criteria** (from CharacterBox paper):
+**Scoring Criteria**:
 
 | Criterion | What It Measures |
 |-----------|------------------|
-| **Creativity** | Dramatic potential, uniqueness, role-play opportunities |
-| **Coherence** | Internal consistency, logical behaviors, sensible arrangement |
-| **Conformity** | Matches source tone/style, faithful characters, accurate setting |
-| **Detail** | Sufficient for immersion, well-defined states, enough context |
+| **Creativity** | Dramatic potential, uniqueness, effective style adaptation |
+| **Coherence** | Internal consistency, logical behaviors |
+| **Conformity** | Maintains spirit of source while fitting thematic style |
+| **Detail** | Sufficient for immersion, style-appropriate details |
 
-**Acceptance Logic**:
-```python
-passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
-```
+**Acceptance**: Average ≥ 3.5 or explicit ACCEPT recommendation
 
-### Pipeline Flow
+---
 
-```
-                         ┌─────────────┐
-        passage ────────►│ SCREENWRITER│────────► raw_scene
-                         │ (format-    │
-                         │  aware)     │
-                         └─────────────┘
-                                │
-                                ▼
-                         ┌─────────────┐
-        raw_scene ──────►│  DIRECTOR   │────────► refined_scene
-                         └─────────────┘
-                                │
-                                ▼
-                         ┌─────────────┐
-        refined_scene ──►│  EVALUATOR  │────────► score + decision
-                         └─────────────┘
-                                │
-                    ┌───────────┴───────────┐
-                    ▼                       ▼
-                 ACCEPT                  REJECT
-                    │                       │
-                    ▼                       ▼
-              Return Scene            Retry (max 2x)
-                                     or Return None
+## Thematic Styles
+
+The pipeline includes 16 thematic styles to create diverse scene variations:
+
+### Available Styles
+
+| Style | Description | Setting Hints |
+|-------|-------------|---------------|
+| **cyberpunk** | High-tech dystopia, megacorps, hackers | Neon streets, corporate towers, AR overlays |
+| **steampunk** | Victorian + steam tech, clockwork | Brass machinery, airship docks, inventor workshops |
+| **noir** | 1940s crime drama, moral ambiguity | Smoky jazz clubs, rain-soaked streets, shadows |
+| **gothic_horror** | Dark romanticism, supernatural dread | Crumbling mansions, misty moors, candlelit crypts |
+| **solarpunk** | Optimistic eco-future, sustainability | Vertical gardens, solar communities, green cities |
+| **dieselpunk** | 1920s-40s aesthetic, pulp adventure | Art deco towers, zeppelin docks, speakeasies |
+| **wuxia** | Chinese martial arts fantasy | Misty mountains, bamboo forests, martial schools |
+| **space_opera** | Galactic empires, epic adventures | Starship bridges, alien cantinas, space stations |
+| **weird_west** | Frontier + supernatural horror | Dusty towns, haunted mines, cursed lands |
+| **biopunk** | Biotech, genetic engineering | Gene clinics, organic architecture, body-mod parlors |
+| **mythic** | Ancient gods, epic quests | Sacred groves, divine palaces, enchanted seas |
+| **post_apocalyptic** | Civilization collapsed, survival | Ruined cities, fortified settlements, wastelands |
+| **dark_academia** | Elite schools, obsessive knowledge | Ivy halls, candlelit libraries, secret societies |
+| **afrofuturism** | African diaspora + advanced tech | Advanced African nations, ancestral digital realms |
+| **cosmic_horror** | Lovecraftian existential dread | Non-Euclidean architecture, forgotten temples |
+| **pastoral** | Idealized rural life, simple pleasures | Thatched cottages, flowering meadows, cozy kitchens |
+
+### Genre-Style Affinities
+
+Styles are weighted toward genres that fit well together:
+
+| Source Genre | Preferred Styles |
+|--------------|------------------|
+| **social_drama** | noir, dark_academia, pastoral, steampunk, cyberpunk |
+| **mystery** | noir, gothic_horror, cyberpunk, steampunk, cosmic_horror |
+| **horror** | gothic_horror, cosmic_horror, biopunk, post_apocalyptic, weird_west |
+| **intrigue** | noir, cyberpunk, steampunk, dieselpunk, space_opera |
+| **adventure** | steampunk, dieselpunk, space_opera, wuxia, weird_west, mythic |
+| **sci_fi_horror** | biopunk, cosmic_horror, cyberpunk, post_apocalyptic |
+| **fantasy** | mythic, steampunk, wuxia, solarpunk, gothic_horror |
+| **comedy** | steampunk, pastoral, dark_academia, space_opera, dieselpunk |
+| **historical_drama** | dieselpunk, noir, steampunk, gothic_horror, dark_academia |
+| **tragedy** | gothic_horror, noir, cosmic_horror, mythic, dark_academia |
+
+### How Theming Works
+
+**Generated scenes** (default behavior):
+- Each generated scene gets a randomly selected unique style
+- Styles are picked from the affinity list 70% of the time
+- Example: 5 generated scenes might get: cyberpunk, noir, steampunk, wuxia, gothic_horror
+
+**Extracted scenes** (with `--theme-extracted`):
+- A portion (default 50%) get thematic reimagining
+- The rest stay faithful to the original work
+- Example: 3 of 5 extracted scenes stay original, 2 get themed
+
+### Example Output
+
+```json
+{
+  "source_title": "Pride and Prejudice",
+  "source_id": 1342,
+  "scene_type": "generated",
+  "source_format": "novel",
+  "thematic_style": "cyberpunk",
+  "style_description": "Cyberpunk",
+  "environment": {
+    "time": "2am, neon-drenched night",
+    "location": "The Bennet family's cramped apartment in Neo-London's mid-tier residential block",
+    "description": "Holographic advertisements flicker outside rain-streaked windows. The family's outdated AR setup casts blue light across tense faces. Mrs. Bennet's voice competes with the hum of the building's aging life support systems."
+  },
+  "characters": [
+    {
+      "name": "Elizabeth 'Liz' Bennet",
+      "role": "Underground data analyst, second daughter",
+      "physical_state": "Neural interface port visible at temple, wearing a faded corporate jumpsuit repurposed as casual wear",
+      "psychological_state": "Defiant yet calculating, masking vulnerability behind sharp wit and encrypted thoughts",
+      "position": "Leaning against the window, half-watching the street below",
+      "relationships": {
+        "Darcy": "Suspicious of his corporate connections despite unexpected attraction"
+      }
+    },
+    {
+      "name": "William Darcy",
+      "role": "Executive at Pemberley Dynamics megacorp",
+      "physical_state": "Immaculate corporate attire, subtle cybernetic enhancements barely visible",
+      "psychological_state": "Conflicted between corporate loyalty and growing fascination with the lower-block analyst",
+      "position": "Standing stiffly by the door, clearly uncomfortable in the modest surroundings",
+      "relationships": {
+        "Elizabeth": "Reluctant respect masked by class prejudice protocols"
+      }
+    }
+  ],
+  "quality_scores": {
+    "creativity": 5,
+    "coherence": 4,
+    "conformity": 4,
+    "detail": 5,
+    "average": 4.5
+  }
+}
 ```
 
 ---
@@ -309,141 +379,29 @@ The pipeline automatically detects whether input text is a **play** or **novel**
 
 ### Format Detection
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    FormatDetector                           │
-│  - Samples text from beginning, middle, end                 │
-│  - Counts pattern matches for play vs novel indicators      │
-│  - Returns: PLAY, NOVEL, or UNKNOWN + confidence score      │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-          ┌───────────┴───────────┐
-          ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│  PlaySegmenter  │     │ NovelSegmenter  │
-└─────────────────┘     └─────────────────┘
-```
-
-### Detection Patterns
-
 | Indicator | Play Pattern | Novel Pattern |
 |-----------|--------------|---------------|
 | **Structure** | `ACT II, SCENE 3` | `CHAPTER 5`, `Chapter V` |
 | **Dialogue** | `HAMLET. To be or not to be` | `"To be," said John` |
 | **Directions** | `[Enter GHOST]`, `(aside)` | Narrative prose |
 | **Markers** | `DRAMATIS PERSONAE` | Paragraph indentation |
-| **Speech** | `CHARACTER:` or `CHARACTER.` | `he said`, `she replied` |
 
-### Play Segmentation Strategy
+### Play Segmentation
 
-```
-Full Play Text
-      │
-      ▼
-┌─────────────────────────────────────┐
-│  1. Split by Act/Scene markers      │
-│     - ACT I, SCENE 1                │
-│     - Act II. Scene 3               │
-│     - SCENE IV                      │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  2. If scene > max_chars:           │
-│     Split by dialogue blocks        │
-│     (groups of CHARACTER. lines)    │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  3. Score each passage:             │
-│     - Speaker variety (unique chars)│
-│     - Dialogue density              │
-│     - Stage directions count        │
-│     - Dramatic words (!?!)          │
-└─────────────────────────────────────┘
-```
+1. Split by Act/Scene markers
+2. If scene > max_chars: split by dialogue blocks
+3. Score by: speaker variety, dialogue density, stage directions
 
-**Play Scoring Factors**:
+### Novel Segmentation
 
-| Factor | How It's Measured | Max Points |
-|--------|-------------------|------------|
-| Speaker Variety | Unique `CHARACTER.` markers | 3.0 |
-| Dialogue Density | Speeches per 1K chars | 3.0 |
-| Stage Directions | `[brackets]` and `(parens)` | 1.5 |
-| Dramatic Words | love, death, betray, etc. | 2.0 |
-| Exclamations | `!` and `?` count | 1.5 |
-
-### Novel Segmentation Strategy
-
-```
-Full Novel Text
-      │
-      ▼
-┌─────────────────────────────────────┐
-│  1. Split by Chapter markers        │
-│     - CHAPTER I                     │
-│     - Chapter 1                     │
-│     - BOOK TWO                      │
-│     - PART III                      │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  2. If chapter > max_chars:         │
-│     Try scene breaks (* * *)        │
-│     Then paragraph splitting        │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│  3. Score each passage:             │
-│     - Dialogue density (quotes)     │
-│     - Character mentions (names)    │
-│     - Action verbs                  │
-│     - Emotional content             │
-│     - Scene-setting words           │
-└─────────────────────────────────────┘
-```
-
-**Novel Scoring Factors**:
-
-| Factor | How It's Measured | Max Points |
-|--------|-------------------|------------|
-| Dialogue Density | `"quotes"` per 1K chars | 3.0 |
-| Character Mentions | Capitalized names | 2.0 |
-| Action Verbs | said, walked, looked, etc. | 2.5 |
-| Emotional Content | love, fear, angry, etc. | 1.5 |
-| Scene-Setting | room, morning, entered, etc. | 1.0 |
+1. Split by Chapter markers
+2. If chapter > max_chars: split by scene breaks (`* * *`) or paragraphs
+3. Score by: dialogue density, character mentions, action verbs
 
 ### Testing the Segmenter
 
 ```bash
-# Analyze a text file
 python passage_segmenter.py hamlet.txt --analyze
-
-# Output:
-# ============================================================
-# Format Detection
-# ============================================================
-#   Detected format: PLAY
-#   Confidence: 0.85
-#
-# ============================================================
-# Segmentation Results
-# ============================================================
-#   Total passages: 23
-#   Length range: 1842-5621 chars
-#   Average length: 3204 chars
-#   Score range: 4.21-9.87
-#
-#   Top sections:
-#     - ACT III SCENE 1
-#     - ACT I SCENE 5
-#     - ACT V SCENE 2
-#     ...
-
-# Get top 5 passages
 python passage_segmenter.py pride_and_prejudice.txt --top 5
 ```
 
@@ -455,17 +413,11 @@ python passage_segmenter.py pride_and_prejudice.txt --top 5
 
 ```json
 {
-  "1342": "The Project Gutenberg eBook of Pride and Prejudice, by Jane Austen...",
-  "1661": "The Project Gutenberg eBook of The Adventures of Sherlock Holmes...",
-  "844": "The Project Gutenberg eBook of The Importance of Being Earnest...",
-  "1524": "The Project Gutenberg eBook of Hamlet, by William Shakespeare..."
+  "1342": "The Project Gutenberg eBook of Pride and Prejudice...",
+  "1661": "The Project Gutenberg eBook of Sherlock Holmes...",
+  "844": "The Project Gutenberg eBook of The Importance of Being Earnest..."
 }
 ```
-
-**Notes**:
-- Keys are Gutenberg book IDs (as strings or integers)
-- Values are full book text
-- Must match IDs in `BOOK_METADATA` dictionary (or add new entries)
 
 ### Output: scenes.json
 
@@ -477,90 +429,42 @@ python passage_segmenter.py pride_and_prejudice.txt --top 5
     "scene_type": "extracted",
     "source_format": "novel",
     "section_name": "Chapter 34 (part 1)",
-    "environment": {
-      "time": "Late morning, autumn",
-      "location": "The drawing room at Longbourn estate",
-      "description": "Pale sunlight filters through tall Georgian windows, casting long shadows across the worn Persian rug. The fire crackles low in the hearth, and the faint scent of dried lavender lingers in the air."
-    },
-    "characters": [
-      {
-        "name": "Elizabeth Bennet",
-        "role": "Second eldest Bennet daughter, protagonist",
-        "physical_state": "Seated upright on the settee, hands folded in her lap",
-        "psychological_state": "Guarded yet curious, masking her interest behind polite indifference",
-        "position": "Near the fireplace, facing both the window and the door",
-        "relationships": {
-          "Mr. Darcy": "Complex mixture of attraction and resentment"
-        }
-      },
-      {
-        "name": "Mr. Fitzwilliam Darcy",
-        "role": "Wealthy gentleman from Derbyshire",
-        "physical_state": "Standing stiffly by the mantelpiece",
-        "psychological_state": "Internally conflicted between pride and growing admiration",
-        "position": "Opposite Elizabeth, maintaining formal distance",
-        "relationships": {
-          "Elizabeth Bennet": "Reluctant fascination he struggles to suppress"
-        }
-      }
-    ],
-    "quality_scores": {
-      "creativity": 4,
-      "coherence": 5,
-      "conformity": 5,
-      "detail": 4,
-      "average": 4.5,
-      "justifications": {
-        "creativity": "Strong dramatic tension with clear stakes",
-        "coherence": "All elements logically consistent",
-        "conformity": "Perfectly captures Austen's drawing room dynamics",
-        "detail": "Rich sensory details support immersion"
-      },
-      "suggestions": []
-    }
+    "thematic_style": null,
+    "style_description": null,
+    "environment": { ... },
+    "characters": [ ... ],
+    "quality_scores": { ... }
   },
   {
-    "source_title": "Hamlet",
-    "source_id": 1524,
-    "scene_type": "extracted",
-    "source_format": "play",
-    "section_name": "ACT III SCENE 1",
-    "environment": {
-      "time": "Afternoon, within the castle",
-      "location": "A lobby in Elsinore Castle",
-      "description": "A dim corridor with stone walls and tapestries. Claudius and Polonius hide behind an arras, while Ophelia waits with a book, staged to appear reading."
-    },
-    "characters": [
-      {
-        "name": "Hamlet",
-        "role": "Prince of Denmark, protagonist",
-        "physical_state": "Pacing slowly, disheveled appearance suggesting inner turmoil",
-        "psychological_state": "Deeply contemplative, wrestling with existence itself",
-        "position": "Center stage, unaware of the hidden observers",
-        "relationships": {
-          "Ophelia": "Former love now tainted by suspicion and grief"
-        }
-      },
-      {
-        "name": "Ophelia",
-        "role": "Daughter of Polonius, Hamlet's former love",
-        "physical_state": "Seated demurely, holding a prayer book",
-        "psychological_state": "Torn between obedience to father and love for Hamlet",
-        "position": "Downstage right, positioned to intercept Hamlet",
-        "relationships": {
-          "Hamlet": "Confused love mixed with fear at his changed behavior"
-        }
-      }
-    ],
-    "quality_scores": {
-      "creativity": 5,
-      "coherence": 5,
-      "conformity": 5,
-      "detail": 5,
-      "average": 5.0
-    }
+    "source_title": "Pride and Prejudice",
+    "source_id": 1342,
+    "scene_type": "generated",
+    "source_format": "novel",
+    "section_name": null,
+    "thematic_style": "steampunk",
+    "style_description": "Steampunk",
+    "environment": { ... },
+    "characters": [ ... ],
+    "quality_scores": { ... }
   }
 ]
+```
+
+### Output Location
+
+| File | Location | Set By |
+|------|----------|--------|
+| **Scenes** | `./scenes.json` | `--output` / `-o` |
+| **Log file** | `./scene_crafter_YYYYMMDD_HHMMSS.log` | `--log` / `-l` |
+
+Files are saved to the current working directory by default. Use absolute paths to control location:
+
+```bash
+python scene_crafter.py \
+    --api-key $KEY \
+    --input /path/to/books.json \
+    --output /path/to/scenes.json \
+    --log /path/to/run.log
 ```
 
 ### Supported Books (Default)
@@ -595,18 +499,14 @@ python passage_segmenter.py pride_and_prejudice.txt --top 5
 
 ### Adding New Books
 
-Edit the `BOOK_METADATA` dictionary in `scene_crafter.py`:
-
 ```python
 BOOK_METADATA = {
-    # Existing books...
-    
     # Add a novel
     16328: {
         "title": "Beowulf",
         "author": "Anonymous",
-        "genre": "epic_poetry",
-        "format": "novel"  # or omit - will auto-detect
+        "genre": "adventure",  # Affects style selection
+        "format": "novel"
     },
     
     # Add a play
@@ -619,42 +519,27 @@ BOOK_METADATA = {
 }
 ```
 
-### Changing the Model
+### Adding New Thematic Styles
 
-```bash
-# Use a different Fireworks model
-python scene_crafter.py \
-    --api-key $KEY \
-    --input books.json \
-    --model accounts/fireworks/models/llama-v3p1-70b-instruct
+```python
+THEMATIC_STYLES["art_nouveau"] = {
+    "name": "Art Nouveau",
+    "description": "Organic flowing forms, nature motifs, decorative elegance of the 1890s-1910s",
+    "setting_hints": "curving architecture, floral motifs, stained glass, elegant salons",
+    "tech_elements": "ornate gas lamps, decorated trains, artistic posters, flowing gowns",
+    "tone": "aesthetic, romantic, nature-inspired, elegant decadence"
+}
+
+# Add to genre affinities
+GENRE_STYLE_AFFINITIES["social_drama"].append("art_nouveau")
+GENRE_STYLE_AFFINITIES["comedy"].append("art_nouveau")
 ```
 
 ### Adjusting Quality Threshold
 
-In `evaluator_assess()`, modify the acceptance logic:
-
 ```python
-# Current: average >= 3.5
-passes = scores["average"] >= 3.5 or evaluation.get("overall_recommendation") == "ACCEPT"
-
-# Stricter: require 4.0 average
-passes = scores["average"] >= 4.0
-
-# More lenient: require 3.0 average
-passes = scores["average"] >= 3.0
-```
-
-### Adjusting Passage Size
-
-In `scene_crafter.py`:
-
-```python
-# In SceneCrafter.__init__
-if USE_NEW_SEGMENTER:
-    self.segmenter = PassageSegmenter(
-        min_chars=1500,  # Shorter passages (default: 2000)
-        max_chars=8000   # Longer passages (default: 6000)
-    )
+# In evaluator_assess()
+passes = scores["average"] >= 4.0  # Stricter (default: 3.5)
 ```
 
 ---
@@ -671,93 +556,67 @@ books.json
 │ For each book_id, book_text:                                    │
 │                                                                 │
 │   ┌─────────────────────────────────────────────────────────┐  │
-│   │ 1. Format Detection                                     │  │
-│   │    FormatDetector.detect(text) → PLAY or NOVEL         │  │
-│   └────────────────────────┬────────────────────────────────┘  │
+│   │ 1. Format Detection → PLAY or NOVEL                    │  │
+│   └─────────────────────────────────────────────────────────┘  │
 │                            │                                    │
-│              ┌─────────────┴─────────────┐                     │
-│              ▼                           ▼                      │
-│   ┌─────────────────┐         ┌─────────────────┐              │
-│   │ PlaySegmenter   │         │ NovelSegmenter  │              │
-│   │ - Act/Scene     │         │ - Chapter       │              │
-│   │ - Dialogue      │         │ - Paragraph     │              │
-│   └────────┬────────┘         └────────┬────────┘              │
-│            └─────────────┬─────────────┘                       │
-│                          ▼                                      │
 │   ┌─────────────────────────────────────────────────────────┐  │
-│   │ 2. Passage Selection                                    │  │
-│   │    Score + rank → top N passages                        │  │
-│   └────────────────────────┬────────────────────────────────┘  │
+│   │ 2. Style Selection                                      │  │
+│   │    - Pick N unique styles for generated scenes          │  │
+│   │    - Optionally pick styles for extracted scenes        │  │
+│   │    - Weight selection by genre affinity                 │  │
+│   └─────────────────────────────────────────────────────────┘  │
 │                            │                                    │
-│   ┌────────────────────────▼────────────────────────────────┐  │
-│   │ 3. For each passage: craft_scene()                      │  │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │ 3. Passage Selection (format-aware)                     │  │
+│   │    - PlaySegmenter or NovelSegmenter                    │  │
+│   │    - Score and rank passages                            │  │
+│   └─────────────────────────────────────────────────────────┘  │
+│                            │                                    │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │ 4. For each passage: craft_scene(style_key)             │  │
 │   │                                                         │  │
-│   │   Stage 1: screenwriter_extract(passage, format)        │  │
-│   │            → raw_scene                                  │  │
-│   │                                                         │  │
-│   │   Stage 2: director_refine(raw_scene)                   │  │
-│   │            → refined_scene                              │  │
-│   │                                                         │  │
-│   │   Stage 3: evaluator_assess(refined_scene)              │  │
-│   │            → scores + ACCEPT/REJECT                     │  │
-│   │                                                         │  │
-│   │   If ACCEPT: return Scene(...)                          │  │
-│   │   If REJECT: retry once with refined as input           │  │
+│   │   Stage 1: screenwriter (original or themed)            │  │
+│   │   Stage 2: director (style-aware refinement)            │  │
+│   │   Stage 3: evaluator (style-aware scoring)              │  │
+│   └─────────────────────────────────────────────────────────┘  │
+│                            │                                    │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │ 5. Generate scenes: craft_scene(unique_style)           │  │
+│   │    Each generated scene gets a different style          │  │
 │   └─────────────────────────────────────────────────────────┘  │
 │                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐  │
-│   │ 4. Generate original scenes: craft_scene(None, format)  │  │
-│   └─────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│   ──► Save progress to scenes.json                             │
+│   ──► Save progress to scenes.json (after each book)           │
 └─────────────────────────────────────────────────────────────────┘
     │
     ▼
-scenes.json (list of Scene objects with format metadata)
+scenes.json (with thematic_style and style_description fields)
 ```
 
-### Retry Logic
-
-The pipeline has multiple retry mechanisms:
+### Style Selection Algorithm
 
 ```python
-# LLM API retries (in LLMClient.call)
-for attempt in range(3):
-    try:
-        response = api_call()
-    except:
-        time.sleep(2 ** attempt)  # 1s, 2s, 4s backoff
-
-# Pipeline stage retries (in craft_scene)
-for attempt in range(2):
-    refined = director_refine(raw)
-    passes, scores = evaluator_assess(refined)
-    if passes:
-        return Scene(...)
+def select_style(genre, prefer_affinity=True, affinity_weight=0.7, exclude=[]):
+    affinity_styles = GENRE_STYLE_AFFINITIES.get(genre, [])
+    
+    if prefer_affinity and random.random() < 0.7:
+        # 70% chance: pick from affinity list
+        return random.choice(affinity_styles)
     else:
-        raw = refined  # Feed refined version back
-
-# Book-level retries (in craft_scenes_for_book)
-passages = select_best_passages(text, n=n_extracted * 2)  # Get 2x needed
-for passage in passages:
-    if extracted >= n_extracted:
-        break
-    # Some will fail, but we have extras
+        # 30% chance: pick from any style
+        return random.choice(all_styles)
 ```
 
-### JSON Parsing Robustness
+### Incremental Saves
 
-LLMs often wrap JSON in markdown code blocks:
+Progress is saved after each book completes:
 
 ```python
-def call_json(self, prompt):
-    response = self.call(prompt)
+for book_id, book_text in found.items():
+    scenes = crafter.craft_scenes_for_book(...)
+    all_scenes.extend(scenes)
     
-    # Handle: ```json\n{...}\n``` or ```\n{...}\n```
-    json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response)
-    json_str = json_match.group(1) if json_match else response
-    
-    return json.loads(json_str.strip())
+    # Save after each book
+    save_output(all_scenes, args.output)
 ```
 
 ---
@@ -767,90 +626,25 @@ def call_json(self, prompt):
 ### Adding a New Segmenter for Poetry
 
 ```python
-# In passage_segmenter.py
-
 class PoetrySegmenter:
-    """Segment poetry by stanzas or cantos."""
-    
     CANTO_PATTERN = re.compile(r'\n\s*(CANTO\s+[IVXLCDM\d]+)', re.IGNORECASE)
-    STANZA_BREAK = re.compile(r'\n\s*\n')  # Blank lines between stanzas
     
     @classmethod
-    def segment(cls, text: str, min_chars: int, max_chars: int) -> list[Passage]:
+    def segment(cls, text, min_chars, max_chars):
         # Group stanzas into passage-sized chunks
         ...
-    
-    @classmethod
-    def _score_passage(cls, text: str) -> float:
-        # Score by: imagery, dialogue, narrative action
-        ...
 ```
 
-### Adding a New Stage (Dramaturg)
+### Genre-Specific Scoring
 
 ```python
-# In scene_crafter.py
-
-DRAMATURG_ENHANCE = '''You are a dramaturg enhancing dialogue for "{title}".
-
-SCENE:
-{scene}
-
-Improve the dialogue potential by:
-1. Adding subtext and tension to relationships
-2. Creating opportunities for revealing character through speech
-3. Identifying moments of dramatic irony
-
-Respond with JSON...'''
-
-class SceneCrafter:
-    def dramaturg_enhance(self, scene: dict, book_id: int) -> dict:
-        meta = BOOK_METADATA[book_id]
-        prompt = DRAMATURG_ENHANCE.format(
-            title=meta["title"],
-            scene=json.dumps(scene, indent=2)
-        )
-        return self.llm.call_json(prompt)
-    
-    def craft_scene(self, passage, book_id, scene_type, source_format, section_name):
-        # Stage 1
-        raw = self.screenwriter_extract(passage, book_id, source_format)
-        
-        # Stage 2
-        refined = self.director_refine(raw, book_id)
-        
-        # NEW Stage 2.5
-        enhanced = self.dramaturg_enhance(refined, book_id)
-        
-        # Stage 3
-        passes, scores = self.evaluator_assess(enhanced, book_id)
-        # ...
-```
-
-### Custom Scoring for Specific Genres
-
-```python
-# In passage_segmenter.py
-
 class MysteryNovelSegmenter(NovelSegmenter):
-    """Custom segmenter optimized for mystery novels."""
-    
     @classmethod
-    def _score_passage(cls, text: str) -> float:
-        # Start with base novel score
+    def _score_passage(cls, text):
         score = super()._score_passage(text)
         
-        # Add mystery-specific bonuses
-        mystery_words = ['clue', 'suspect', 'murder', 'detective', 'evidence', 'alibi']
+        mystery_words = ['clue', 'suspect', 'murder', 'evidence']
         score += sum(text.lower().count(w) for w in mystery_words) * 0.5
-        
-        # Bonus for interrogation scenes
-        if 'asked' in text.lower() and '?' in text:
-            score += 2.0
-        
-        # Bonus for revelation moments
-        revelation_words = ['realized', 'discovered', 'revealed', 'truth']
-        score += sum(text.lower().count(w) for w in revelation_words) * 0.3
         
         return score
 ```
@@ -858,35 +652,16 @@ class MysteryNovelSegmenter(NovelSegmenter):
 ### Parallel Processing
 
 ```python
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
-def craft_all_scenes_parallel(found: dict, crafter: SceneCrafter, max_workers: int = 3) -> list:
-    """Process multiple books in parallel."""
-    all_scenes = []
-    
+def craft_all_parallel(found, crafter, max_workers=3):
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(
-                crafter.craft_scenes_for_book, 
-                text, 
-                book_id
-            ): book_id 
+            executor.submit(crafter.craft_scenes_for_book, text, book_id): book_id
             for book_id, text in found.items()
         }
-        
-        for future in as_completed(futures):
-            book_id = futures[future]
-            try:
-                scenes = future.result()
-                all_scenes.extend(scenes)
-                print(f"Completed book {book_id}: {len(scenes)} scenes")
-            except Exception as e:
-                print(f"Book {book_id} failed: {e}")
-    
-    return all_scenes
+        # ... collect results
 ```
-
-**Note**: Be mindful of API rate limits when parallelizing.
 
 ---
 
@@ -896,102 +671,29 @@ def craft_all_scenes_parallel(found: dict, crafter: SceneCrafter, max_workers: i
 
 #### "Skipping book X: no metadata"
 
-**Cause**: Book ID not in `BOOK_METADATA` dictionary.
-
-**Fix**: Add the book's metadata:
+Add the book to `BOOK_METADATA`:
 ```python
-BOOK_METADATA[YOUR_BOOK_ID] = {
-    "title": "Book Title",
-    "author": "Author Name", 
-    "genre": "genre_tag",
-    "format": "novel"  # or "play"
-}
+BOOK_METADATA[YOUR_ID] = {"title": "...", "author": "...", "genre": "...", "format": "novel"}
 ```
 
-#### Play detected as novel (or vice versa)
+#### Wrong format detected
 
-**Cause**: Text doesn't have strong format indicators.
-
-**Fix**: Override format in metadata:
+Override in metadata:
 ```python
-BOOK_METADATA[844] = {
-    "title": "The Importance of Being Earnest",
-    "author": "Oscar Wilde",
-    "genre": "comedy",
-    "format": "play"  # Force play segmentation
-}
+BOOK_METADATA[844]["format"] = "play"  # Force play segmentation
 ```
 
-Or check detection confidence:
-```bash
-python passage_segmenter.py your_text.txt --analyze
-# Look at confidence score - if < 0.5, consider forcing format
-```
+#### Low quality scores
 
-#### JSON Parse Errors
+- Check if format detection is correct
+- Run with `--verbose` to see score breakdowns
+- Try lowering threshold: change `>= 3.5` to `>= 3.0`
 
-**Cause**: LLM returned malformed JSON or extra text.
+#### Rate limiting
 
-**Symptoms**:
-```
-json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes
-```
-
-**Fixes**:
-1. Lower temperature:
-   ```python
-   return self.llm.call_json(prompt, temperature=0.5)
-   ```
-
-2. Stronger JSON instructions in prompts:
-   ```python
-   PROMPT = '''...
-   IMPORTANT: Respond with ONLY valid JSON. 
-   No markdown, no explanation, no code blocks.
-   Start with { and end with }
-   '''
-   ```
-
-#### Low Quality Scores
-
-**Diagnosis**:
-```bash
-python scene_crafter.py --verbose -i books.json --api-key $KEY
-```
-
-**Fixes**:
-1. Get more passage candidates:
-   ```python
-   passages = self._select_passages(book_text, book_id, n=n_extracted * 3)
-   ```
-
-2. Lower threshold temporarily:
-   ```python
-   passes = scores["average"] >= 3.0
-   ```
-
-3. Check if format detection is correct - wrong format = wrong prompts.
-
-#### Rate Limiting
-
-**Symptoms**:
-```
-openai.RateLimitError: Rate limit exceeded
-```
-
-**Fix**: Add delay between calls:
+Add delay between API calls:
 ```python
-class LLMClient:
-    def __init__(self, ...):
-        self.last_call = 0
-        self.min_interval = 1.0  # seconds
-    
-    def call(self, ...):
-        elapsed = time.time() - self.last_call
-        if elapsed < self.min_interval:
-            time.sleep(self.min_interval - elapsed)
-        self.last_call = time.time()
-        # ... rest of call
+self.min_interval = 1.0  # seconds between calls
 ```
 
 ---
@@ -1002,12 +704,12 @@ With Kimi K2 on Fireworks (~$0.80/M tokens):
 
 | Component | Tokens/Scene | Cost/Scene |
 |-----------|--------------|------------|
-| Screenwriter | ~2K in, ~500 out | ~$0.002 |
-| Director | ~1K in, ~800 out | ~$0.0015 |
-| Evaluator | ~1K in, ~300 out | ~$0.001 |
-| **Total** | ~5-6K tokens | **~$0.005** |
+| Screenwriter | ~2.5K in, ~600 out | ~$0.0025 |
+| Director | ~1.5K in, ~900 out | ~$0.002 |
+| Evaluator | ~1.2K in, ~400 out | ~$0.0013 |
+| **Total** | ~6-7K tokens | **~$0.006** |
 
-**For 100 scenes**: ~$0.50 (excluding retries)  
+**For 100 scenes**: ~$0.60 (excluding retries)
 **With retries**: ~$1-2
 
 ---
@@ -1023,21 +725,16 @@ With Kimi K2 on Fireworks (~$0.80/M tokens):
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
-
 ### Areas for Improvement
 
 - [ ] Poetry/verse segmentation
-- [ ] Genre-specific scoring (mystery, romance, etc.)
-- [ ] Support for non-English texts
+- [ ] More thematic styles (art nouveau, dieselpunk variants, etc.)
+- [ ] Style blending (e.g., "gothic cyberpunk")
+- [ ] Non-English text support
 - [ ] Caching to avoid re-processing
 - [ ] Web UI for scene review/editing
 - [ ] Integration with CharacterBox evaluation pipeline
-- [ ] Better handling of epistolary novels (letters)
-- [ ] Support for screenplay format (distinct from stage plays)
+- [ ] User-defined custom styles via config file
 
 ---
 
