@@ -1,6 +1,8 @@
-# Scene Crafting Pipeline
+# CharacterBox Scene Crafting Pipeline
 
 A three-stage pipeline for extracting and generating high-quality role-playing scenes from literary works, based on the [CharacterBox paper](https://arxiv.org/abs/2412.05631) (NAACL 2025).
+
+**Now with intelligent format detection for plays vs. novels!**
 
 ## Table of Contents
 
@@ -8,6 +10,7 @@ A three-stage pipeline for extracting and generating high-quality role-playing s
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [The Three-Stage Pipeline](#the-three-stage-pipeline)
+- [Format Detection & Segmentation](#format-detection--segmentation)
 - [Input/Output Formats](#inputoutput-formats)
 - [Configuration](#configuration)
 - [How It Works (Deep Dive)](#how-it-works-deep-dive)
@@ -33,11 +36,23 @@ This pipeline transforms raw literary texts into structured scenes suitable for 
 
 ### Key Features
 
-- **Extraction**: Pulls scenes from existing passages in books
-- **Generation**: Creates original scenes set in the book's world
-- **Quality Control**: Three-stage refinement with scoring and rejection
-- **Incremental Saves**: Progress saved after each book (crash-safe)
-- **Configurable**: Adjust scenes per book, model, verbosity
+| Feature | Description |
+|---------|-------------|
+| **Format Detection** | Automatically identifies plays vs. novels and applies appropriate segmentation |
+| **Extraction** | Pulls scenes from existing passages in books |
+| **Generation** | Creates original scenes set in the book's world |
+| **Quality Control** | Three-stage refinement with scoring and rejection |
+| **Incremental Saves** | Progress saved after each book (crash-safe) |
+| **Configurable** | Adjust scenes per book, model, verbosity |
+
+### File Structure
+
+```
+├── scene_crafter_v2.py     # Main pipeline script
+├── passage_segmenter.py    # Format detection + intelligent segmentation
+├── README.md               # This file
+└── books.json              # Your input (book texts)
+```
 
 ---
 
@@ -60,6 +75,7 @@ import json
 found = {
     1342: "The Project Gutenberg eBook of Pride and Prejudice...",
     1661: "The Project Gutenberg eBook of Sherlock Holmes...",
+    844: "The Project Gutenberg eBook of The Importance of Being Earnest...",
     # ...
 }
 
@@ -71,13 +87,13 @@ with open('books.json', 'w', encoding='utf-8') as f:
 
 ```bash
 # Basic usage
-python scene_crafter.py \
+python scene_crafter_v2.py \
     --api-key YOUR_FIREWORKS_API_KEY \
     --input books.json \
     --output scenes.json
 
 # With options
-python scene_crafter.py \
+python scene_crafter_v2.py \
     --api-key $FIREWORKS_KEY \
     --input books.json \
     --output scenes.json \
@@ -85,8 +101,8 @@ python scene_crafter.py \
     -g 5 \        # 5 generated scenes per book
     --verbose     # Detailed logging
 
-# Background execution
-nohup python scene_crafter.py \
+# Background execution (keeps running after terminal closes)
+nohup python scene_crafter_v2.py \
     --api-key $FIREWORKS_KEY \
     --input books.json \
     --output scenes.json \
@@ -128,10 +144,11 @@ tail -f scene_crafter_*.log
 │                    │  ┌─────────────────────────────────────────┐  │   │
 │                    │  │     craft_scenes_for_book()             │  │   │
 │                    │  │                                         │  │   │
-│                    │  │  1. select_best_passages(text)          │  │   │
-│                    │  │  2. For each passage: craft_scene()     │  │   │
-│                    │  │  3. Generate original: craft_scene()    │  │   │
-│                    │  │  4. Save progress                       │  │   │
+│                    │  │  1. Detect format (play vs novel)       │  │   │
+│                    │  │  2. Select best passages                │  │   │
+│                    │  │  3. For each passage: craft_scene()     │  │   │
+│                    │  │  4. Generate original: craft_scene()    │  │   │
+│                    │  │  5. Save progress                       │  │   │
 │                    │  └─────────────────────────────────────────┘  │   │
 │                    └───────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
@@ -140,31 +157,58 @@ tail -f scene_crafter_*.log
 ### Class Structure
 
 ```
-scene_crafter.py
+scene_crafter_v2.py
 │
 ├── Data Classes
-│   ├── Character      # Name, role, physical/psychological state, position
-│   ├── Environment    # Time, location, description
-│   └── Scene          # Full scene with characters + environment + scores
+│   ├── Character          # Name, role, physical/psychological state, position
+│   ├── Environment        # Time, location, description
+│   └── Scene              # Full scene + scores + format metadata
 │
-├── LLMClient          # OpenAI-compatible API wrapper
-│   ├── call()         # Raw LLM call with retries
-│   └── call_json()    # Call + JSON parsing
+├── LLMClient              # OpenAI-compatible API wrapper
+│   ├── call()             # Raw LLM call with retries
+│   └── call_json()        # Call + JSON parsing
 │
-├── SceneCrafter       # Main pipeline orchestrator
-│   ├── screenwriter_extract()   # Stage 1: Extract from passage
-│   ├── screenwriter_generate()  # Stage 1: Generate original
-│   ├── director_refine()        # Stage 2: Enhance scene
-│   ├── evaluator_assess()       # Stage 3: Score and filter
-│   ├── craft_scene()            # Full 3-stage pipeline
-│   └── craft_scenes_for_book()  # Batch processing
+├── SceneCrafter           # Main pipeline orchestrator
+│   ├── _get_format()              # Detect play vs novel
+│   ├── _select_passages()         # Get best passages for format
+│   ├── screenwriter_extract()     # Stage 1: Extract (format-aware)
+│   ├── screenwriter_generate()    # Stage 1: Generate (format-aware)
+│   ├── director_refine()          # Stage 2: Enhance scene
+│   ├── evaluator_assess()         # Stage 3: Score and filter
+│   ├── craft_scene()              # Full 3-stage pipeline
+│   └── craft_scenes_for_book()    # Batch processing
 │
 └── Utilities
-    ├── segment_into_passages()  # Split book into chunks
-    ├── score_passage()          # Heuristic passage ranking
-    ├── select_best_passages()   # Get top N passages
-    ├── load_input()             # Load books.json
-    └── save_output()            # Save scenes.json
+    ├── load_input()       # Load books.json
+    └── save_output()      # Save scenes.json
+
+passage_segmenter.py
+│
+├── FormatDetector         # Detect if text is play, novel, or unknown
+│   ├── PLAY_PATTERNS      # Act/Scene, CHARACTER:, stage directions
+│   ├── NOVEL_PATTERNS     # Chapter, narrative prose, paragraphs
+│   └── detect()           # Returns format + confidence
+│
+├── PlaySegmenter          # Segment plays into scenes
+│   ├── _split_by_scenes()         # Split on Act/Scene markers
+│   ├── _split_by_dialogue_blocks()# Split by character speeches
+│   └── _score_passage()           # Score for dramatic potential
+│
+├── NovelSegmenter         # Segment novels into passages
+│   ├── _split_by_chapters()       # Split on Chapter markers
+│   ├── _split_long_chapter()      # Handle oversized chapters
+│   ├── _split_by_paragraphs()     # Fallback splitting
+│   └── _score_passage()           # Score for scene potential
+│
+├── PassageSegmenter       # Unified interface
+│   ├── segment()          # Auto-detect and segment
+│   ├── select_best()      # Get top N passages
+│   └── analyze()          # Return stats and diagnostics
+│
+└── Convenience Functions  # Drop-in replacements
+    ├── segment_into_passages()
+    ├── select_best_passages()
+    └── score_passage()
 ```
 
 ---
@@ -187,10 +231,9 @@ Output: Basic scene JSON with environment + characters
 - Extracts time and location
 - Captures basic character states and relationships
 
-**Prompt Strategy**:
-```
-"You are an expert screenwriter extracting a scene from {title} by {author}..."
-```
+**Format-Aware Prompts**:
+- **Novels**: Looks for quoted dialogue, narrative descriptions
+- **Plays**: Understands `CHARACTER.` dialogue format, stage directions in `[brackets]`
 
 ### Stage 2: Director
 
@@ -206,15 +249,6 @@ Output: Enhanced scene with conflict, hooks, richer details
 - Enriches character motivations
 - Improves spatial positioning
 - Adds narrative hooks for role-play
-
-**Prompt Strategy**:
-```
-"You are a director refining a scene... Enhance with:
-1. Clearer central conflict
-2. Richer character details
-3. Better spatial positioning
-4. Narrative hooks"
-```
 
 ### Stage 3: Evaluator
 
@@ -244,6 +278,8 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
 ```
                          ┌─────────────┐
         passage ────────►│ SCREENWRITER│────────► raw_scene
+                         │ (format-    │
+                         │  aware)     │
                          └─────────────┘
                                 │
                                 ▼
@@ -267,6 +303,152 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
 
 ---
 
+## Format Detection & Segmentation
+
+The pipeline automatically detects whether input text is a **play** or **novel** and applies appropriate segmentation strategies.
+
+### Format Detection
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FormatDetector                           │
+│  - Samples text from beginning, middle, end                 │
+│  - Counts pattern matches for play vs novel indicators      │
+│  - Returns: PLAY, NOVEL, or UNKNOWN + confidence score      │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+          ┌───────────┴───────────┐
+          ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐
+│  PlaySegmenter  │     │ NovelSegmenter  │
+└─────────────────┘     └─────────────────┘
+```
+
+### Detection Patterns
+
+| Indicator | Play Pattern | Novel Pattern |
+|-----------|--------------|---------------|
+| **Structure** | `ACT II, SCENE 3` | `CHAPTER 5`, `Chapter V` |
+| **Dialogue** | `HAMLET. To be or not to be` | `"To be," said John` |
+| **Directions** | `[Enter GHOST]`, `(aside)` | Narrative prose |
+| **Markers** | `DRAMATIS PERSONAE` | Paragraph indentation |
+| **Speech** | `CHARACTER:` or `CHARACTER.` | `he said`, `she replied` |
+
+### Play Segmentation Strategy
+
+```
+Full Play Text
+      │
+      ▼
+┌─────────────────────────────────────┐
+│  1. Split by Act/Scene markers      │
+│     - ACT I, SCENE 1                │
+│     - Act II. Scene 3               │
+│     - SCENE IV                      │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  2. If scene > max_chars:           │
+│     Split by dialogue blocks        │
+│     (groups of CHARACTER. lines)    │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  3. Score each passage:             │
+│     - Speaker variety (unique chars)│
+│     - Dialogue density              │
+│     - Stage directions count        │
+│     - Dramatic words (!?!)          │
+└─────────────────────────────────────┘
+```
+
+**Play Scoring Factors**:
+
+| Factor | How It's Measured | Max Points |
+|--------|-------------------|------------|
+| Speaker Variety | Unique `CHARACTER.` markers | 3.0 |
+| Dialogue Density | Speeches per 1K chars | 3.0 |
+| Stage Directions | `[brackets]` and `(parens)` | 1.5 |
+| Dramatic Words | love, death, betray, etc. | 2.0 |
+| Exclamations | `!` and `?` count | 1.5 |
+
+### Novel Segmentation Strategy
+
+```
+Full Novel Text
+      │
+      ▼
+┌─────────────────────────────────────┐
+│  1. Split by Chapter markers        │
+│     - CHAPTER I                     │
+│     - Chapter 1                     │
+│     - BOOK TWO                      │
+│     - PART III                      │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  2. If chapter > max_chars:         │
+│     Try scene breaks (* * *)        │
+│     Then paragraph splitting        │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  3. Score each passage:             │
+│     - Dialogue density (quotes)     │
+│     - Character mentions (names)    │
+│     - Action verbs                  │
+│     - Emotional content             │
+│     - Scene-setting words           │
+└─────────────────────────────────────┘
+```
+
+**Novel Scoring Factors**:
+
+| Factor | How It's Measured | Max Points |
+|--------|-------------------|------------|
+| Dialogue Density | `"quotes"` per 1K chars | 3.0 |
+| Character Mentions | Capitalized names | 2.0 |
+| Action Verbs | said, walked, looked, etc. | 2.5 |
+| Emotional Content | love, fear, angry, etc. | 1.5 |
+| Scene-Setting | room, morning, entered, etc. | 1.0 |
+
+### Testing the Segmenter
+
+```bash
+# Analyze a text file
+python passage_segmenter.py hamlet.txt --analyze
+
+# Output:
+# ============================================================
+# Format Detection
+# ============================================================
+#   Detected format: PLAY
+#   Confidence: 0.85
+#
+# ============================================================
+# Segmentation Results
+# ============================================================
+#   Total passages: 23
+#   Length range: 1842-5621 chars
+#   Average length: 3204 chars
+#   Score range: 4.21-9.87
+#
+#   Top sections:
+#     - ACT III SCENE 1
+#     - ACT I SCENE 5
+#     - ACT V SCENE 2
+#     ...
+
+# Get top 5 passages
+python passage_segmenter.py pride_and_prejudice.txt --top 5
+```
+
+---
+
 ## Input/Output Formats
 
 ### Input: books.json
@@ -275,14 +457,15 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
 {
   "1342": "The Project Gutenberg eBook of Pride and Prejudice, by Jane Austen...",
   "1661": "The Project Gutenberg eBook of The Adventures of Sherlock Holmes...",
-  "345": "The Project Gutenberg eBook of Dracula, by Bram Stoker..."
+  "844": "The Project Gutenberg eBook of The Importance of Being Earnest...",
+  "1524": "The Project Gutenberg eBook of Hamlet, by William Shakespeare..."
 }
 ```
 
 **Notes**:
 - Keys are Gutenberg book IDs (as strings or integers)
 - Values are full book text
-- Must match IDs in `BOOK_METADATA` dictionary
+- Must match IDs in `BOOK_METADATA` dictionary (or add new entries)
 
 ### Output: scenes.json
 
@@ -292,32 +475,32 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
     "source_title": "Pride and Prejudice",
     "source_id": 1342,
     "scene_type": "extracted",
+    "source_format": "novel",
+    "section_name": "Chapter 34 (part 1)",
     "environment": {
       "time": "Late morning, autumn",
       "location": "The drawing room at Longbourn estate",
-      "description": "Pale sunlight filters through tall Georgian windows, casting long shadows across the worn Persian rug. The fire crackles low in the hearth, and the faint scent of dried lavender lingers in the air. Outside, a light rain patters against the glass."
+      "description": "Pale sunlight filters through tall Georgian windows, casting long shadows across the worn Persian rug. The fire crackles low in the hearth, and the faint scent of dried lavender lingers in the air."
     },
     "characters": [
       {
         "name": "Elizabeth Bennet",
         "role": "Second eldest Bennet daughter, protagonist",
-        "physical_state": "Seated upright on the settee, hands folded in her lap, wearing a simple muslin day dress",
-        "psychological_state": "Guarded yet curious, masking her interest behind a veneer of polite indifference",
-        "position": "Near the fireplace, angled to face both the window and the door",
+        "physical_state": "Seated upright on the settee, hands folded in her lap",
+        "psychological_state": "Guarded yet curious, masking her interest behind polite indifference",
+        "position": "Near the fireplace, facing both the window and the door",
         "relationships": {
-          "Mr. Darcy": "Complex mixture of attraction and resentment",
-          "Jane Bennet": "Beloved elder sister and confidante"
+          "Mr. Darcy": "Complex mixture of attraction and resentment"
         }
       },
       {
         "name": "Mr. Fitzwilliam Darcy",
         "role": "Wealthy gentleman from Derbyshire",
-        "physical_state": "Standing stiffly by the mantelpiece, one hand resting on the marble",
-        "psychological_state": "Internally conflicted, struggling between pride and growing admiration",
+        "physical_state": "Standing stiffly by the mantelpiece",
+        "psychological_state": "Internally conflicted between pride and growing admiration",
         "position": "Opposite Elizabeth, maintaining formal distance",
         "relationships": {
-          "Elizabeth Bennet": "Reluctant fascination he struggles to suppress",
-          "Mr. Bingley": "Close friend whose happiness he feels responsible for"
+          "Elizabeth Bennet": "Reluctant fascination he struggles to suppress"
         }
       }
     ],
@@ -328,12 +511,53 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
       "detail": 4,
       "average": 4.5,
       "justifications": {
-        "creativity": "Strong dramatic tension between characters with clear stakes",
-        "coherence": "All elements logically consistent with established characters",
+        "creativity": "Strong dramatic tension with clear stakes",
+        "coherence": "All elements logically consistent",
         "conformity": "Perfectly captures Austen's drawing room dynamics",
         "detail": "Rich sensory details support immersion"
       },
       "suggestions": []
+    }
+  },
+  {
+    "source_title": "Hamlet",
+    "source_id": 1524,
+    "scene_type": "extracted",
+    "source_format": "play",
+    "section_name": "ACT III SCENE 1",
+    "environment": {
+      "time": "Afternoon, within the castle",
+      "location": "A lobby in Elsinore Castle",
+      "description": "A dim corridor with stone walls and tapestries. Claudius and Polonius hide behind an arras, while Ophelia waits with a book, staged to appear reading."
+    },
+    "characters": [
+      {
+        "name": "Hamlet",
+        "role": "Prince of Denmark, protagonist",
+        "physical_state": "Pacing slowly, disheveled appearance suggesting inner turmoil",
+        "psychological_state": "Deeply contemplative, wrestling with existence itself",
+        "position": "Center stage, unaware of the hidden observers",
+        "relationships": {
+          "Ophelia": "Former love now tainted by suspicion and grief"
+        }
+      },
+      {
+        "name": "Ophelia",
+        "role": "Daughter of Polonius, Hamlet's former love",
+        "physical_state": "Seated demurely, holding a prayer book",
+        "psychological_state": "Torn between obedience to father and love for Hamlet",
+        "position": "Downstage right, positioned to intercept Hamlet",
+        "relationships": {
+          "Hamlet": "Confused love mixed with fear at his changed behavior"
+        }
+      }
+    ],
+    "quality_scores": {
+      "creativity": 5,
+      "coherence": 5,
+      "conformity": 5,
+      "detail": 5,
+      "average": 5.0
     }
   }
 ]
@@ -341,6 +565,7 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
 
 ### Supported Books (Default)
 
+#### Novels
 | ID | Title | Author | Genre |
 |----|-------|--------|-------|
 | 1342 | Pride and Prejudice | Jane Austen | social_drama |
@@ -351,8 +576,18 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
 | 84 | Frankenstein | Mary Shelley | sci_fi_horror |
 | 11 | Alice's Adventures in Wonderland | Lewis Carroll | fantasy |
 | 120 | Treasure Island | Robert Louis Stevenson | adventure |
-| 844 | The Importance of Being Earnest | Oscar Wilde | comedy |
 | 98 | A Tale of Two Cities | Charles Dickens | historical_drama |
+
+#### Plays
+| ID | Title | Author | Genre |
+|----|-------|--------|-------|
+| 844 | The Importance of Being Earnest | Oscar Wilde | comedy |
+| 1524 | Hamlet | William Shakespeare | tragedy |
+| 1533 | Macbeth | William Shakespeare | tragedy |
+| 1531 | Romeo and Juliet | William Shakespeare | tragedy |
+| 1521 | A Midsummer Night's Dream | William Shakespeare | comedy |
+| 2270 | An Ideal Husband | Oscar Wilde | comedy |
+| 4085 | A Doll's House | Henrik Ibsen | drama |
 
 ---
 
@@ -360,17 +595,26 @@ passes = (average_score >= 3.5) or (recommendation == "ACCEPT")
 
 ### Adding New Books
 
-Edit the `BOOK_METADATA` dictionary:
+Edit the `BOOK_METADATA` dictionary in `scene_crafter_v2.py`:
 
 ```python
 BOOK_METADATA = {
     # Existing books...
     
-    # Add new book
+    # Add a novel
     16328: {
         "title": "Beowulf",
         "author": "Anonymous",
-        "genre": "epic_poetry"
+        "genre": "epic_poetry",
+        "format": "novel"  # or omit - will auto-detect
+    },
+    
+    # Add a play
+    2267: {
+        "title": "The Tempest",
+        "author": "William Shakespeare",
+        "genre": "comedy",
+        "format": "play"
     },
 }
 ```
@@ -379,7 +623,7 @@ BOOK_METADATA = {
 
 ```bash
 # Use a different Fireworks model
-python scene_crafter.py \
+python scene_crafter_v2.py \
     --api-key $KEY \
     --input books.json \
     --model accounts/fireworks/models/llama-v3p1-70b-instruct
@@ -400,41 +644,77 @@ passes = scores["average"] >= 4.0
 passes = scores["average"] >= 3.0
 ```
 
+### Adjusting Passage Size
+
+In `scene_crafter_v2.py`:
+
+```python
+# In SceneCrafter.__init__
+if USE_NEW_SEGMENTER:
+    self.segmenter = PassageSegmenter(
+        min_chars=1500,  # Shorter passages (default: 2000)
+        max_chars=8000   # Longer passages (default: 6000)
+    )
+```
+
 ---
 
 ## How It Works (Deep Dive)
 
-### Passage Selection Algorithm
+### Complete Data Flow
 
-The pipeline doesn't process entire books—it selects the most promising passages:
-
-```python
-def segment_into_passages(text, min_chars=2000, max_chars=6000):
-    """
-    1. Try splitting by chapter markers (CHAPTER I, Chapter 1, etc.)
-    2. If not enough segments, fall back to paragraph splitting
-    3. Target: passages of 2000-6000 characters
-    """
-
-def score_passage(passage):
-    """
-    Heuristic scoring based on:
-    - Dialogue density (quotation marks)
-    - Named character mentions (capitalized words)
-    - Action verbs (said, walked, looked, etc.)
-    
-    Higher score = more likely to contain a good scene
-    """
-
-def select_best_passages(text, n=10):
-    """
-    1. Segment book into passages
-    2. Score each passage
-    3. Return top N by score
-    """
 ```
-
-**Why this matters**: Books contain exposition, description, and transitions that don't make good scenes. This heuristic finds dialogue-heavy, action-rich sections.
+books.json
+    │
+    ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ For each book_id, book_text:                                    │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │ 1. Format Detection                                     │  │
+│   │    FormatDetector.detect(text) → PLAY or NOVEL         │  │
+│   └────────────────────────┬────────────────────────────────┘  │
+│                            │                                    │
+│              ┌─────────────┴─────────────┐                     │
+│              ▼                           ▼                      │
+│   ┌─────────────────┐         ┌─────────────────┐              │
+│   │ PlaySegmenter   │         │ NovelSegmenter  │              │
+│   │ - Act/Scene     │         │ - Chapter       │              │
+│   │ - Dialogue      │         │ - Paragraph     │              │
+│   └────────┬────────┘         └────────┬────────┘              │
+│            └─────────────┬─────────────┘                       │
+│                          ▼                                      │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │ 2. Passage Selection                                    │  │
+│   │    Score + rank → top N passages                        │  │
+│   └────────────────────────┬────────────────────────────────┘  │
+│                            │                                    │
+│   ┌────────────────────────▼────────────────────────────────┐  │
+│   │ 3. For each passage: craft_scene()                      │  │
+│   │                                                         │  │
+│   │   Stage 1: screenwriter_extract(passage, format)        │  │
+│   │            → raw_scene                                  │  │
+│   │                                                         │  │
+│   │   Stage 2: director_refine(raw_scene)                   │  │
+│   │            → refined_scene                              │  │
+│   │                                                         │  │
+│   │   Stage 3: evaluator_assess(refined_scene)              │  │
+│   │            → scores + ACCEPT/REJECT                     │  │
+│   │                                                         │  │
+│   │   If ACCEPT: return Scene(...)                          │  │
+│   │   If REJECT: retry once with refined as input           │  │
+│   └─────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │ 4. Generate original scenes: craft_scene(None, format)  │  │
+│   └─────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│   ──► Save progress to scenes.json                             │
+└─────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+scenes.json (list of Scene objects with format metadata)
+```
 
 ### Retry Logic
 
@@ -446,7 +726,7 @@ for attempt in range(3):
     try:
         response = api_call()
     except:
-        time.sleep(2 ** attempt)  # 1s, 2s, 4s
+        time.sleep(2 ** attempt)  # 1s, 2s, 4s backoff
 
 # Pipeline stage retries (in craft_scene)
 for attempt in range(2):
@@ -455,7 +735,7 @@ for attempt in range(2):
     if passes:
         return Scene(...)
     else:
-        raw = refined  # Feed refined version back for another try
+        raw = refined  # Feed refined version back
 
 # Book-level retries (in craft_scenes_for_book)
 passages = select_best_passages(text, n=n_extracted * 2)  # Get 2x needed
@@ -484,11 +764,33 @@ def call_json(self, prompt):
 
 ## Extending the Pipeline
 
-### Adding a New Stage
-
-Example: Add a "Dramaturg" stage between Director and Evaluator:
+### Adding a New Segmenter for Poetry
 
 ```python
+# In passage_segmenter.py
+
+class PoetrySegmenter:
+    """Segment poetry by stanzas or cantos."""
+    
+    CANTO_PATTERN = re.compile(r'\n\s*(CANTO\s+[IVXLCDM\d]+)', re.IGNORECASE)
+    STANZA_BREAK = re.compile(r'\n\s*\n')  # Blank lines between stanzas
+    
+    @classmethod
+    def segment(cls, text: str, min_chars: int, max_chars: int) -> list[Passage]:
+        # Group stanzas into passage-sized chunks
+        ...
+    
+    @classmethod
+    def _score_passage(cls, text: str) -> float:
+        # Score by: imagery, dialogue, narrative action
+        ...
+```
+
+### Adding a New Stage (Dramaturg)
+
+```python
+# In scene_crafter_v2.py
+
 DRAMATURG_ENHANCE = '''You are a dramaturg enhancing dialogue for "{title}".
 
 SCENE:
@@ -510,9 +812,9 @@ class SceneCrafter:
         )
         return self.llm.call_json(prompt)
     
-    def craft_scene(self, passage, book_id, scene_type):
+    def craft_scene(self, passage, book_id, scene_type, source_format, section_name):
         # Stage 1
-        raw = self.screenwriter_extract(passage, book_id)
+        raw = self.screenwriter_extract(passage, book_id, source_format)
         
         # Stage 2
         refined = self.director_refine(raw, book_id)
@@ -525,70 +827,40 @@ class SceneCrafter:
         # ...
 ```
 
-### Custom Passage Scoring
-
-Add domain-specific scoring for your use case:
+### Custom Scoring for Specific Genres
 
 ```python
-def score_passage_for_mystery(passage: str) -> float:
-    """Custom scorer for mystery novels."""
-    score = 0.0
-    
-    # Base score
-    score += score_passage(passage)
-    
-    # Mystery-specific bonuses
-    mystery_words = ['clue', 'suspect', 'murder', 'detective', 'evidence', 'alibi']
-    score += sum(passage.lower().count(w) for w in mystery_words) * 0.5
-    
-    # Bonus for interrogation scenes
-    if 'asked' in passage.lower() and '?' in passage:
-        score += 2.0
-    
-    return score
-```
+# In passage_segmenter.py
 
-### Different Output Formats
-
-Convert to CharacterBox's expected format:
-
-```python
-def to_characterbox_format(scene: Scene) -> dict:
-    """Convert to CharacterBox evaluation format."""
-    return {
-        "E": {  # Environment
-            "time": scene.environment.time,
-            "location": scene.environment.location,
-            "description": scene.environment.description,
-        },
-        "C": [  # Characters
-            {
-                "name": c.name,
-                "role": c.role,
-                "state": {
-                    "physical": c.physical_state,
-                    "psychological": c.psychological_state,
-                },
-                "position": c.position,
-                "relationships": c.relationships,
-            }
-            for c in scene.characters
-        ],
-        "metadata": {
-            "source": scene.source_title,
-            "type": scene.scene_type,
-        }
-    }
+class MysteryNovelSegmenter(NovelSegmenter):
+    """Custom segmenter optimized for mystery novels."""
+    
+    @classmethod
+    def _score_passage(cls, text: str) -> float:
+        # Start with base novel score
+        score = super()._score_passage(text)
+        
+        # Add mystery-specific bonuses
+        mystery_words = ['clue', 'suspect', 'murder', 'detective', 'evidence', 'alibi']
+        score += sum(text.lower().count(w) for w in mystery_words) * 0.5
+        
+        # Bonus for interrogation scenes
+        if 'asked' in text.lower() and '?' in text:
+            score += 2.0
+        
+        # Bonus for revelation moments
+        revelation_words = ['realized', 'discovered', 'revealed', 'truth']
+        score += sum(text.lower().count(w) for w in revelation_words) * 0.3
+        
+        return score
 ```
 
 ### Parallel Processing
 
-For faster execution with many books:
-
 ```python
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def craft_all_scenes_parallel(found: dict, max_workers: int = 3) -> list:
+def craft_all_scenes_parallel(found: dict, crafter: SceneCrafter, max_workers: int = 3) -> list:
     """Process multiple books in parallel."""
     all_scenes = []
     
@@ -607,9 +879,9 @@ def craft_all_scenes_parallel(found: dict, max_workers: int = 3) -> list:
             try:
                 scenes = future.result()
                 all_scenes.extend(scenes)
-                logger.info(f"Completed book {book_id}: {len(scenes)} scenes")
+                print(f"Completed book {book_id}: {len(scenes)} scenes")
             except Exception as e:
-                logger.error(f"Book {book_id} failed: {e}")
+                print(f"Book {book_id} failed: {e}")
     
     return all_scenes
 ```
@@ -631,8 +903,29 @@ def craft_all_scenes_parallel(found: dict, max_workers: int = 3) -> list:
 BOOK_METADATA[YOUR_BOOK_ID] = {
     "title": "Book Title",
     "author": "Author Name", 
-    "genre": "genre_tag"
+    "genre": "genre_tag",
+    "format": "novel"  # or "play"
 }
+```
+
+#### Play detected as novel (or vice versa)
+
+**Cause**: Text doesn't have strong format indicators.
+
+**Fix**: Override format in metadata:
+```python
+BOOK_METADATA[844] = {
+    "title": "The Importance of Being Earnest",
+    "author": "Oscar Wilde",
+    "genre": "comedy",
+    "format": "play"  # Force play segmentation
+}
+```
+
+Or check detection confidence:
+```bash
+python passage_segmenter.py your_text.txt --analyze
+# Look at confidence score - if < 0.5, consider forcing format
 ```
 
 #### JSON Parse Errors
@@ -645,96 +938,61 @@ json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes
 ```
 
 **Fixes**:
-1. Lower temperature for more consistent output:
+1. Lower temperature:
    ```python
    return self.llm.call_json(prompt, temperature=0.5)
    ```
 
-2. Add more explicit JSON instructions to prompts:
+2. Stronger JSON instructions in prompts:
    ```python
    PROMPT = '''...
-   
-   IMPORTANT: Respond with ONLY valid JSON. No markdown, no explanation, no code blocks.
-   Start your response with { and end with }
+   IMPORTANT: Respond with ONLY valid JSON. 
+   No markdown, no explanation, no code blocks.
+   Start with { and end with }
    '''
    ```
 
-3. Add fallback parsing:
+#### Low Quality Scores
+
+**Diagnosis**:
+```bash
+python scene_crafter_v2.py --verbose -i books.json --api-key $KEY
+```
+
+**Fixes**:
+1. Get more passage candidates:
    ```python
-   def call_json(self, prompt):
-       response = self.call(prompt)
-       
-       # Try multiple extraction strategies
-       strategies = [
-           lambda r: json.loads(r),  # Direct parse
-           lambda r: json.loads(re.search(r'```json?\s*(.*?)\s*```', r, re.DOTALL).group(1)),
-           lambda r: json.loads(re.search(r'\{.*\}', r, re.DOTALL).group()),
-       ]
-       
-       for strategy in strategies:
-           try:
-               return strategy(response)
-           except:
-               continue
-       
-       raise ValueError(f"Could not parse JSON from: {response[:200]}")
+   passages = self._select_passages(book_text, book_id, n=n_extracted * 3)
    ```
 
-#### Rate Limiting
+2. Lower threshold temporarily:
+   ```python
+   passes = scores["average"] >= 3.0
+   ```
 
-**Cause**: Too many API calls too quickly.
+3. Check if format detection is correct - wrong format = wrong prompts.
+
+#### Rate Limiting
 
 **Symptoms**:
 ```
 openai.RateLimitError: Rate limit exceeded
 ```
 
-**Fixes**:
-1. Increase retry delay:
-   ```python
-   time.sleep(2 ** attempt + random.uniform(0, 1))
-   ```
-
-2. Add global rate limiting:
-   ```python
-   import time
-   
-   class LLMClient:
-       def __init__(self, ...):
-           self.last_call = 0
-           self.min_interval = 0.5  # seconds between calls
-       
-       def call(self, ...):
-           elapsed = time.time() - self.last_call
-           if elapsed < self.min_interval:
-               time.sleep(self.min_interval - elapsed)
-           
-           self.last_call = time.time()
-           # ... rest of call
-   ```
-
-#### Low Quality Scores
-
-**Cause**: Passages don't contain good scene material, or prompts need tuning.
-
-**Diagnosis**:
-```bash
-# Run with verbose logging
-python scene_crafter.py --verbose -i books.json --api-key $KEY
+**Fix**: Add delay between calls:
+```python
+class LLMClient:
+    def __init__(self, ...):
+        self.last_call = 0
+        self.min_interval = 1.0  # seconds
+    
+    def call(self, ...):
+        elapsed = time.time() - self.last_call
+        if elapsed < self.min_interval:
+            time.sleep(self.min_interval - elapsed)
+        self.last_call = time.time()
+        # ... rest of call
 ```
-
-**Fixes**:
-1. Adjust passage selection parameters:
-   ```python
-   passages = select_best_passages(text, n=n_extracted * 3)  # Get more candidates
-   ```
-
-2. Lower acceptance threshold temporarily:
-   ```python
-   passes = scores["average"] >= 3.0  # Instead of 3.5
-   ```
-
-3. Improve prompts with more specific guidance for the genre.
 
 ---
 
@@ -763,12 +1021,6 @@ With Kimi K2 on Fireworks (~$0.80/M tokens):
 
 ---
 
-## License
-
-MIT License - See LICENSE file.
-
----
-
 ## Contributing
 
 1. Fork the repository
@@ -776,10 +1028,19 @@ MIT License - See LICENSE file.
 3. Add tests for new functionality
 4. Submit a pull request
 
-**Areas for improvement**:
-- [ ] Better passage segmentation for plays vs. novels
-- [ ] Genre-specific prompts and scoring
+### Areas for Improvement
+
+- [ ] Poetry/verse segmentation
+- [ ] Genre-specific scoring (mystery, romance, etc.)
 - [ ] Support for non-English texts
 - [ ] Caching to avoid re-processing
 - [ ] Web UI for scene review/editing
 - [ ] Integration with CharacterBox evaluation pipeline
+- [ ] Better handling of epistolary novels (letters)
+- [ ] Support for screenplay format (distinct from stage plays)
+
+---
+
+## License
+
+MIT License - See LICENSE file.
