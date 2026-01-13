@@ -48,7 +48,7 @@ This pipeline transforms raw literary texts into structured scenes suitable for 
 ### File Structure
 
 ```
-├── scene_crafter_v2.py     # Main pipeline script
+├── scene_crafter.py     # Main pipeline script
 ├── passage_segmenter.py    # Format detection + intelligent segmentation
 ├── README.md               # This file
 └── books.json              # Your input (book texts)
@@ -157,7 +157,7 @@ tail -f scene_crafter_*.log
 ### Class Structure
 
 ```
-scene_crafter_v2.py
+scene_crafter.py
 │
 ├── Data Classes
 │   ├── Character          # Name, role, physical/psychological state, position
@@ -595,7 +595,7 @@ python passage_segmenter.py pride_and_prejudice.txt --top 5
 
 ### Adding New Books
 
-Edit the `BOOK_METADATA` dictionary in `scene_crafter_v2.py`:
+Edit the `BOOK_METADATA` dictionary in `scene_crafter.py`:
 
 ```python
 BOOK_METADATA = {
@@ -623,7 +623,7 @@ BOOK_METADATA = {
 
 ```bash
 # Use a different Fireworks model
-python scene_crafter_v2.py \
+python scene_crafter.py \
     --api-key $KEY \
     --input books.json \
     --model accounts/fireworks/models/llama-v3p1-70b-instruct
@@ -646,7 +646,7 @@ passes = scores["average"] >= 3.0
 
 ### Adjusting Passage Size
 
-In `scene_crafter_v2.py`:
+In `scene_crafter.py`:
 
 ```python
 # In SceneCrafter.__init__
@@ -789,7 +789,7 @@ class PoetrySegmenter:
 ### Adding a New Stage (Dramaturg)
 
 ```python
-# In scene_crafter_v2.py
+# In scene_crafter.py
 
 DRAMATURG_ENHANCE = '''You are a dramaturg enhancing dialogue for "{title}".
 
@@ -956,7 +956,7 @@ json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes
 
 **Diagnosis**:
 ```bash
-python scene_crafter_v2.py --verbose -i books.json --api-key $KEY
+python scene_crafter.py --verbose -i books.json --api-key $KEY
 ```
 
 **Fixes**:
