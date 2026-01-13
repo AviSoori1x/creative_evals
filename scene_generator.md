@@ -87,13 +87,13 @@ with open('books.json', 'w', encoding='utf-8') as f:
 
 ```bash
 # Basic usage
-python scene_crafter_v2.py \
+python scene_crafter.py \
     --api-key YOUR_FIREWORKS_API_KEY \
     --input books.json \
     --output scenes.json
 
 # With options
-python scene_crafter_v2.py \
+python scene_crafter.py \
     --api-key $FIREWORKS_KEY \
     --input books.json \
     --output scenes.json \
@@ -102,7 +102,7 @@ python scene_crafter_v2.py \
     --verbose     # Detailed logging
 
 # Background execution (keeps running after terminal closes)
-nohup python scene_crafter_v2.py \
+nohup python scene_crafter.py \
     --api-key $FIREWORKS_KEY \
     --input books.json \
     --output scenes.json \
